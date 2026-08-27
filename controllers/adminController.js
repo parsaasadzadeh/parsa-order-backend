@@ -1,5 +1,7 @@
 const Order = require("../models/Order");
-
+const { exec } = require("child_process");
+const path = require("path");
+const fs = require("fs");
 // 1. دریافت لیست تمام سفارش‌ها برای نمایش در داشبورد
 exports.getAllOrders = async (req, res) => {
   try {
@@ -29,39 +31,53 @@ exports.updatePrice = async (req, res) => {
   }
 };
 
-// 3. تایید نهایی و صدور خودکار قرارداد
+
 exports.approveAndGenerateContract = async (req, res) => {
   try {
     const { id } = req.params;
     const order = await Order.findById(id);
-
+    
     if (!order) return res.status(404).json({ message: "سفارش یافت نشد" });
     if (!order.finalPrice) return res.status(400).json({ message: "ابتدا باید قیمت نهایی را تعیین کنید" });
 
-    // قالب‌بندی تاریخ شمسی (اختیاری)
-    const date = new Date().toLocaleDateString('fa-IR');
+    const date = new Date().toLocaleDateString("fa-IR");
+    const outputPath = path.join(__dirname, `../contracts/contract_${id}.pdf`);
+    
+    // اطمینان از وجود پوشه contracts
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
-    // تولید متن قرارداد
-    const contract = `
-    بسمه تعالی
-    قرارداد طراحی وب‌سایت
-    
-    تاریخ: ${date}
-    این قرارداد فی مابین آقای پارسا اسدزاده (مجری) و ${order.name} (کارفرما) با راه‌های ارتباطی ${order.contact} منعقد می‌گردد.
-    
-    موضوع قرارداد: طراحی یک وب‌سایت از نوع "${order.siteType}" با امکانات (${order.features.join('، ')}).
-    
-    مبلغ قرارداد: توافق نهایی برای انجام این پروژه مبلغ ${order.finalPrice.toLocaleString()} تومان می‌باشد.
-    زمان‌بندی حدودی بر اساس درخواست: ${order.deadline}
-    
-    امضای مجری: پارسا اسدزاده                     امضای کارفرما: ${order.name}
-    `;
+    // داده‌های سفارش را به صورت JSON به اسکریپت Python پاس می‌دهیم
+    const orderData = JSON.stringify({
+      orderId: id,
+      name: order.name,
+      contact: order.contact,
+      siteType: order.siteType,
+      features: order.features,
+      finalPrice: order.finalPrice,
+      deadline: order.deadline,
+      desc: order.desc || "",
+      refUrl: order.refUrl || "",
+      date: date,
+    });
 
-    order.contractText = contract;
-    order.status = "approved";
-    await order.save();
+    const escaped = orderData.replace(/'/g, "'\\''");
+    const cmd = `python3 generate_contract.py '${escaped}' '${outputPath}'`;
 
-    res.status(200).json({ message: "قرارداد صادر شد", contract: order.contractText });
+    exec(cmd, async (error, stdout, stderr) => {
+      if (error) {
+        console.error("PDF Error:", stderr);
+        return res.status(500).json({ message: "خطا در تولید PDF", error: stderr });
+      }
+
+      order.contractPath = outputPath;
+      order.status = "approved";
+      await order.save();
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=contract_${id}.pdf`);
+      fs.createReadStream(outputPath).pipe(res);
+    });
+
   } catch (error) {
     res.status(500).json({ message: "خطا در صدور قرارداد", error: error.message });
   }
