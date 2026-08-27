@@ -1,6 +1,11 @@
 const Order = require("../models/Order");
 const PDFDocument = require("pdfkit");
 
+// 🔴 این خط جادویی برای حل خطای Vercel است (ورسل را مجبور می‌کند فونت را پاک نکند)
+try {
+  require("pdfkit/js/standard-fonts/Helvetica.cjs");
+} catch (e) {}
+
 // تابع کمکی برای ساخت و استریم فایل PDF قرارداد
 const generateContractPDF = (order, res) => {
   // تنظیم هدرهای HTTP برای دریافت فایل PDF در مرورگر
