@@ -5,57 +5,80 @@ const PDFDocument = require("pdfkit");
 try {
   require("pdfkit/js/standard-fonts/Helvetica.cjs");
 } catch (e) {}
-
-// تابع کمکی برای ساخت و استریم فایل PDF قرارداد
+// تابع کمکی برای ساخت و استریم فایل PDF قرارداد رسمی
 const generateContractPDF = (order, res) => {
-  // تنظیم هدرهای HTTP برای دریافت فایل PDF در مرورگر
+  // تنظیم هدرهای HTTP برای دانلود فایل PDF با نام فارسی یا انگلیسی صحیح
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(
     "Content-Disposition",
     `attachment; filename=contract_${order._id}.pdf`
   );
 
-  const doc = new PDFDocument({ margin: 50, size: "A4" });
-
-  // هدایت مستقیم خروجی PDF به ریسپانس HTTP
+  // ایجاد سند با حاشیه‌های مناسب
+  const doc = new PDFDocument({ margin: 40, size: "A4" });
   doc.pipe(res);
 
-  const createdDate = new Date(order.createdAt || Date.now()).toLocaleDateString("fa-IR");
-  const priceFormatted = order.finalPrice
-    ? Number(order.finalPrice).toLocaleString("fa-IR") + " Toman"
-    : "-";
+  // آدرس فایل فونت فارسی در پروژه
+  const fontPath = path.join(__dirname, "../fonts/Vazirmatn-Regular.ttf");
 
-  // ساخت ساختار محتوایی قرارداد
-  doc.fontSize(20).text("OFFICIAL SERVICE CONTRACT", { align: "center" });
-  doc.moveDown(1.5);
-
-  doc.fontSize(12);
-  doc.text(`Contract ID: ${order._id}`);
-  doc.text(`Customer Name: ${order.name || "-"}`);
-  doc.text(`Contact Info: ${order.contact || "-"}`);
-  doc.text(`Site Type: ${order.siteType || "-"}`);
-  doc.text(`Budget Range: ${order.budget || "-"}`);
-  doc.text(`Final Approved Price: ${priceFormatted}`);
-  doc.text(`Deadline: ${order.deadline || "-"}`);
-  doc.text(`Date of Issue: ${createdDate}`);
-  doc.moveDown();
-
-  if (order.features && order.features.length > 0) {
-    doc.text(`Requested Features: ${order.features.join(", ")}`);
-    doc.moveDown();
+  try {
+    // ثبت و اعمال فونت فارسی
+    doc.registerFont("Vazir", fontPath);
+    doc.font("Vazir");
+  } catch (err) {
+    console.error("Font loading error:", err.message);
   }
 
-  doc.text(`Description / Requirements:`);
-  doc.text(order.desc || "No additional requirements specified.");
-  doc.moveDown(2);
+  // --- شروع طراحی متن رسمی قرارداد بر اساس قالب شما ---
+  
+  doc.fontSize(14).text("شماره قرارداد: 1001-WEB", { align: "right" });
+  doc.fontSize(16).text("بسمه تعالی", { align: "center" });
+  doc.fontSize(18).text("قرارداد طراحی وب سایت", { align: "center" });
+  doc.moveDown(1);
 
-  doc.text("Status: APPROVED & SIGNED", { align: "right" });
-  doc.text(`Parsa Development Team`, { align: "right" });
+  doc.fontSize(11);
+  doc.text("ماده ۱ - مشخصات طرفین قرارداد", { bold: true });
+  doc.text(`کارفرما: ${order.name || "---"} | اطلاعات تماس: ${order.contact || "---"}`);
+  doc.text("مجری (طراح): آقای پارسا اسدزاده - طراح و توسعه‌دهنده وب");
+  doc.text(`تاریخ صدور: ۱۴۰۵/۰۶/۰۵`);
+  doc.moveDown(0.5);
 
-  // اتمام ساخت PDF و ارسال به کلاینت
+  doc.text("ماده ۲ - موضوع قرارداد");
+  doc.text(`موضوع این قرارداد عبارت است از طراحی، توسعه و راه‌اندازی یک وب‌سایت از نوع "${order.siteType || "Landing Page"}" با امکانات: ${order.features ? order.features.join(", ") : "استاندارد"}`);
+  doc.moveDown(0.5);
+
+  doc.text("ماده ۳ - شرح خدمات");
+  doc.text("۱. طراحی رابط کاربری (UI) و تجربه کاربری (UX)");
+  doc.text("۲. کدنویسی و توسعه فرانت‌اند و بک‌اند وب‌سایت");
+  doc.text("۳. راه‌اندازی و پیکربندی اولیه و ادغام امکانات درخواست شده");
+  doc.text(`توضیحات تکمیلی / نیازمندی‌ها: ${order.desc || "ندارد"}`);
+  doc.moveDown(0.5);
+
+  doc.text("ماده ۴ - زمان بندی پروژه");
+  doc.text("مهلت اجرا و تحویل نهایی پروژه حدود ۴ هفته می‌باشد.");
+  doc.moveDown(0.5);
+
+  const formattedPrice = order.finalPrice ? Number(order.finalPrice).toLocaleString("fa-IR") : "---";
+  doc.text("ماده ۵ - مبلغ قرارداد و نحوه پرداخت");
+  doc.text(`مبلغ کل قرارداد (توافق شده): ${formattedPrice} تومان`);
+  doc.moveDown(0.5);
+
+  doc.text("ماده ۶ - حقوق مالکیت معنوی");
+  doc.text("وب‌سایت طراحی شده پس از پرداخت کامل مبلغ قرارداد به کارفرما منتقل می‌گردد.");
+  doc.moveDown(0.5);
+
+  doc.text("ماده ۸ - ضمانت کیفیت و پشتیبانی");
+  doc.text("مجری متعهد می‌گردد پس از تحویل نهایی به مدت ۳ ماه خدمات پشتیبانی رایگان ارائه نماید.");
+  doc.moveDown(1);
+
+  doc.text("این قرارداد با علم و آگاهی کامل از مفاد آن به امضا رسیده است.", { align: "center" });
+  doc.moveDown(1.5);
+
+  doc.text("امضای مجری: پارسا اسدزاده                   امضای کارفرما: " + (order.name || "کارفرما"), { align: "center" });
+
+  // پایان سند
   doc.end();
 };
-
 // ۱. دریافت لیست تمام سفارش‌ها
 exports.getAllOrders = async (req, res) => {
   try {
