@@ -1,8 +1,8 @@
 const Order = require("../models/Order");
-const { exec } = require("child_process");
+const PDFDocument = require("pdfkit"); // کتابخانه ساخت PDF در Node.js
 const path = require("path");
-const fs = require("fs");
-// 1. دریافت لیست تمام سفارش‌ها برای نمایش در داشبورد
+
+// ۱. دریافت لیست تمام سفارش‌ها برای نمایش در داشبورد
 exports.getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
@@ -12,16 +12,17 @@ exports.getAllOrders = async (req, res) => {
   }
 };
 
-// 2. ویرایش قیمت توسط پارسا
+// ۲. ویرایش قیمت توسط مدیر
 exports.updatePrice = async (req, res) => {
   try {
     const { id } = req.params;
     const { finalPrice } = req.body;
 
+    // استفاده از returnDocument به جای new برای رفع اخطار Mongoose
     const order = await Order.findByIdAndUpdate(
       id, 
       { finalPrice, status: "reviewed" }, 
-      { new: true }
+      { returnDocument: "after" }
     );
     
     if (!order) return res.status(404).json({ message: "سفارش یافت نشد" });
@@ -31,7 +32,7 @@ exports.updatePrice = async (req, res) => {
   }
 };
 
-
+// ۳. تایید و صدور قرارداد (مستقیم در Node.js بدون پایتون و بدون ذخیره فایل)
 exports.approveAndGenerateContract = async (req, res) => {
   try {
     const { id } = req.params;
@@ -40,45 +41,44 @@ exports.approveAndGenerateContract = async (req, res) => {
     if (!order) return res.status(404).json({ message: "سفارش یافت نشد" });
     if (!order.finalPrice) return res.status(400).json({ message: "ابتدا باید قیمت نهایی را تعیین کنید" });
 
+    // بروزرسانی وضعیت سفارش
+    order.status = "approved";
+    await order.save();
+
+    // تنظیم هدرهای HTTP برای دانلود فایل PDF
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=contract_${id}.pdf`);
+
+    // ایجاد سند PDF در حافظه
+    const doc = new PDFDocument({ margin: 50 });
+
+    // هدایت مستقیم جریان خروجی PDF به ریسپانس مرورگر (بدون ذخیره در دیسک)
+    doc.pipe(res);
+
+    // نکته: برای نمایش حروف فارسی، فایل فونت (مثلاً Vazirmatn.ttf) را در پروژه بگذارید و آدرس دهید
+    /*
+    const fontPath = path.join(__dirname, "../fonts/Vazirmatn-Regular.ttf");
+    doc.font(fontPath);
+    */
+
+    // ساخت محتوای PDF
     const date = new Date().toLocaleDateString("fa-IR");
-    const outputPath = path.join(__dirname, `../contracts/contract_${id}.pdf`);
-    
-    // اطمینان از وجود پوشه contracts
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
-    // داده‌های سفارش را به صورت JSON به اسکریپت Python پاس می‌دهیم
-    const orderData = JSON.stringify({
-      orderId: id,
-      name: order.name,
-      contact: order.contact,
-      siteType: order.siteType,
-      features: order.features,
-      finalPrice: order.finalPrice,
-      deadline: order.deadline,
-      desc: order.desc || "",
-      refUrl: order.refUrl || "",
-      date: date,
-    });
+    doc.fontSize(18).text(`Contract - Order #${order._id}`, { align: "center" });
+    doc.moveDown();
+    doc.fontSize(12).text(`Customer Name: ${order.name}`);
+    doc.text(`Contact: ${order.contact}`);
+    doc.text(`Site Type: ${order.siteType}`);
+    doc.text(`Final Price: ${order.finalPrice}`);
+    doc.text(`Deadline: ${order.deadline || "-"}`);
+    doc.text(`Description: ${order.desc || "-"}`);
+    doc.text(`Date: ${date}`);
 
-    const escaped = orderData.replace(/'/g, "'\\''");
-    const cmd = `python3 generate_contract.py '${escaped}' '${outputPath}'`;
-
-    exec(cmd, async (error, stdout, stderr) => {
-      if (error) {
-        console.error("PDF Error:", stderr);
-        return res.status(500).json({ message: "خطا در تولید PDF", error: stderr });
-      }
-
-      order.contractPath = outputPath;
-      order.status = "approved";
-      await order.save();
-
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename=contract_${id}.pdf`);
-      fs.createReadStream(outputPath).pipe(res);
-    });
+    // اتمام ساخت PDF و ارسال نهایی
+    doc.end();
 
   } catch (error) {
+    console.error("Contract Generation Error:", error);
     res.status(500).json({ message: "خطا در صدور قرارداد", error: error.message });
   }
 };
