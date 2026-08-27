@@ -1,7 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
-const { getAllOrders, updatePrice, approveAndGenerateContract } = require("../controllers/adminController");
+
+// 🔴 تغییر اول: تابع downloadContract را به ایمپورت‌ها اضافه کردیم
+const { 
+  getAllOrders, 
+  updatePrice, 
+  approveAndGenerateContract, 
+  downloadContract 
+} = require("../controllers/adminController");
+
 const authMiddleware = require("../middleware/authMiddleware");
 
 // لاگین - تنها route بدون نیاز به توکن
@@ -25,5 +33,8 @@ router.post("/login", (req, res) => {
 router.get("/orders", authMiddleware, getAllOrders);
 router.put("/orders/:id/price", authMiddleware, updatePrice);
 router.post("/orders/:id/approve", authMiddleware, approveAndGenerateContract);
+
+// 🔴 تغییر دوم: مسیر دانلود فایل PDF را اینجا تعریف کردیم (حل خطای 404)
+router.get("/orders/:id/download-contract", authMiddleware, downloadContract);
 
 module.exports = router;
