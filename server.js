@@ -18,6 +18,7 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.log("❌ خطا در اتصال به دیتابیس:", err));
 
 // Routes
+// با این ترکیب، مسیر دانلود میشه: /api/admin/orders/:id/download-contract
 app.use("/api/orders", orderRoutes);
 app.use("/api/admin", adminRoutes);
 
