@@ -1,43 +1,41 @@
 const Order = require("../models/Order");
 const PDFDocument = require("pdfkit");
+const path = require("path"); // 🔴 این خط گم شده بود که اضافه شد
 
-// 🔴 این خط جادویی برای حل خطای Vercel است (ورسل را مجبور می‌کند فونت را پاک نکند)
+// خط جادویی برای جلوگیری از حذف فونت پیش‌فرض در Vercel
 try {
   require("pdfkit/js/standard-fonts/Helvetica.cjs");
 } catch (e) {}
+
 // تابع کمکی برای ساخت و استریم فایل PDF قرارداد رسمی
 const generateContractPDF = (order, res) => {
-  // تنظیم هدرهای HTTP برای دانلود فایل PDF با نام فارسی یا انگلیسی صحیح
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(
     "Content-Disposition",
     `attachment; filename=contract_${order._id}.pdf`
   );
 
-  // ایجاد سند با حاشیه‌های مناسب
   const doc = new PDFDocument({ margin: 40, size: "A4" });
   doc.pipe(res);
 
-  // آدرس فایل فونت فارسی در پروژه
+  // لود کردن فونت فارسی
   const fontPath = path.join(__dirname, "../fonts/Vazirmatn-Regular.ttf");
 
   try {
-    // ثبت و اعمال فونت فارسی
     doc.registerFont("Vazir", fontPath);
     doc.font("Vazir");
   } catch (err) {
     console.error("Font loading error:", err.message);
   }
 
-  // --- شروع طراحی متن رسمی قرارداد بر اساس قالب شما ---
-  
+  // --- متن رسمی قرارداد ---
   doc.fontSize(14).text("شماره قرارداد: 1001-WEB", { align: "right" });
   doc.fontSize(16).text("بسمه تعالی", { align: "center" });
   doc.fontSize(18).text("قرارداد طراحی وب سایت", { align: "center" });
   doc.moveDown(1);
 
   doc.fontSize(11);
-  doc.text("ماده ۱ - مشخصات طرفین قرارداد", { bold: true });
+  doc.text("ماده ۱ - مشخصات طرفین قرارداد");
   doc.text(`کارفرما: ${order.name || "---"} | اطلاعات تماس: ${order.contact || "---"}`);
   doc.text("مجری (طراح): آقای پارسا اسدزاده - طراح و توسعه‌دهنده وب");
   doc.text(`تاریخ صدور: ۱۴۰۵/۰۶/۰۵`);
@@ -76,9 +74,9 @@ const generateContractPDF = (order, res) => {
 
   doc.text("امضای مجری: پارسا اسدزاده                   امضای کارفرما: " + (order.name || "کارفرما"), { align: "center" });
 
-  // پایان سند
   doc.end();
 };
+
 // ۱. دریافت لیست تمام سفارش‌ها
 exports.getAllOrders = async (req, res) => {
   try {
@@ -124,11 +122,9 @@ exports.approveAndGenerateContract = async (req, res) => {
       return res.status(400).json({ message: "ابتدا باید قیمت نهایی را تعیین کنید" });
     }
 
-    // تغییر وضعیت به تایید شده
     order.status = "approved";
     await order.save();
 
-    // صدور فایل PDF
     generateContractPDF(order, res);
   } catch (error) {
     console.error("Contract Generation Error:", error);
@@ -136,7 +132,7 @@ exports.approveAndGenerateContract = async (req, res) => {
   }
 };
 
-// ۴. دانلود مجدد قرارداد (برای سفارش‌های تایید شده)
+// ۴. دانلود مجدد قرارداد
 exports.downloadContract = async (req, res) => {
   try {
     const { id } = req.params;
@@ -144,7 +140,6 @@ exports.downloadContract = async (req, res) => {
 
     if (!order) return res.status(404).json({ message: "سفارش یافت نشد" });
 
-    // تولید و ارسال مجدد فایل PDF
     generateContractPDF(order, res);
   } catch (error) {
     console.error("Contract Download Error:", error);
