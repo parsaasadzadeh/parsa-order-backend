@@ -1,293 +1,388 @@
-const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
+const { PDFDocument, rgb, degrees } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
+const reshaper = require("arabic-reshaper");
 const { VAZIR_REG_B64, VAZIR_BOLD_B64 } = require("./fonts.js");
 
-// رنگ‌ها
-const NAVY  = rgb(0.059, 0.204, 0.376);
-const WHITE = rgb(1, 1, 1);
-const DARK  = rgb(0.1, 0.1, 0.1);
-const GRAY  = rgb(0.4, 0.4, 0.4);
-const LIGHT_BG = rgb(0.94, 0.96, 1);
+// ── رنگ‌ها ──────────────────────────────────────────────
+const NAVY     = rgb(0.059, 0.204, 0.376);
+const WHITE    = rgb(1, 1, 1);
+const DARK     = rgb(0.08, 0.08, 0.08);
+const GRAY     = rgb(0.45, 0.45, 0.45);
+const LIGHT_BG = rgb(0.94, 0.96, 1.0);
+const GREEN    = rgb(0.06, 0.72, 0.51);
 
-// چون pdf-lib بیدی ندار، از arabic-reshaper پایتون استفاده نمی‌کنیم
-// اما pdf-lib با فونت embed می‌تونه فارسی رو نشون بده (بدون reshaping)
-// برای RTL درست: متن رو از راست شروع می‌کنیم
+// ── RTL helper ──────────────────────────────────────────
+function rtl(text) {
+  if (!text) return "";
+  return String(text)
+    .split("\n")
+    .map((line) => {
+      const reshaped = reshaper.convertArabic(line);
+      return reshaped.split(" ").reverse().join(" ");
+    })
+    .join("\n");
+}
 
+// ── تابع اصلی ───────────────────────────────────────────
 async function generateContractPDF(order) {
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
 
   const regBytes  = Buffer.from(VAZIR_REG_B64,  "base64");
   const boldBytes = Buffer.from(VAZIR_BOLD_B64, "base64");
-  const vazir     = await doc.embedFont(regBytes);
-  const vazirBold = await doc.embedFont(boldBytes);
+  const F  = await doc.embedFont(regBytes);
+  const FB = await doc.embedFont(boldBytes);
 
-  // A4: 595 x 842
-  const W = 595, H = 842;
-  const ML = 45, MR = 45; // margin left/right
-  const CW = W - ML - MR; // content width
+  const PW = 595, PH = 842;
+  const ML = 45, MR = 45;
+  const CW = PW - ML - MR;
 
-  let page = doc.addPage([W, H]);
-  let y = H - 45;
+  let page, y;
 
-  function newPage() {
-    page = doc.addPage([W, H]);
-    y = H - 45;
+  function addPage() {
+    page = doc.addPage([PW, PH]);
+    y = PH - 48;
+  }
+  addPage();
+
+  function checkY(need = 60) {
+    if (y < need + 45) addPage();
   }
 
-  function checkPage(needed = 60) {
-    if (y < needed) newPage();
-  }
-
-  // ── helper: متن RTL (pdf-lib راست‌چین native) ──
-  function textR(text, x, ty, size, font, color = DARK, maxW = CW) {
-    const w = font.widthOfTextAtSize(text, size);
-    const startX = x + maxW - w; // راست‌چین
-    page.drawText(text, { x: startX, y: ty, size, font, color });
-    return w;
-  }
-
-  function textC(text, ty, size, font, color = DARK) {
-    const w = font.widthOfTextAtSize(text, size);
-    page.drawText(text, { x: (W - w) / 2, y: ty, size, font, color });
-  }
-
-  // ── helper: کادر رنگی برای عنوان ماده ──
-  function sectionHeader(title) {
-    checkPage(50);
-    y -= 12;
-    page.drawRectangle({ x: ML, y: y - 4, width: CW, height: 22, color: NAVY });
-    textR(title, ML, y + 3, 11, vazirBold, WHITE);
-    y -= 26;
-  }
-
-  // ── helper: متن بدنه چندخطی (word-wrap دستی) ──
-  function bodyText(text, size = 10.5, font = vazir, indent = 0) {
-    checkPage(40);
-    const maxW = CW - indent;
-    const words = text.split(" ");
-    let line = "";
+  // ── متن RTL با wrap ─────────────────────────────────
+  function drawText(raw, { x = ML, width = CW, size = 10.5,
+    font = F, color = DARK, align = "right", lineH = null } = {}) {
+    
+    const lh = lineH || size * 1.85;
+    const text = rtl(raw);
+    const words = text.split(" ").filter(Boolean);
     const lines = [];
-    for (const word of words) {
-      const test = line ? line + " " + word : word;
-      if (font.widthOfTextAtSize(test, size) > maxW && line) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = test;
-      }
-    }
-    if (line) lines.push(line);
+    let cur = "";
 
-    for (const l of lines) {
-      checkPage(20);
-      textR(l, ML + indent, y, size, font, DARK, maxW);
-      y -= size * 1.8;
+    for (const w of words) {
+      const test = cur ? cur + " " + w : w;
+      if (font.widthOfTextAtSize(test, size) > width - 4 && cur) {
+        lines.push(cur); cur = w;
+      } else cur = test;
     }
-    y -= 4;
+    if (cur) lines.push(cur);
+
+    for (const line of lines) {
+      checkY(lh);
+      const tw = font.widthOfTextAtSize(line, size);
+      let dx;
+      if (align === "right")  dx = x + width - tw;
+      else if (align === "center") dx = x + (width - tw) / 2;
+      else dx = x;
+      page.drawText(line, { x: dx, y, size, font, color });
+      y -= lh;
+    }
+    y -= 2;
   }
 
-  function listItem(text) {
-    bodyText("• " + text, 10.5, vazir, 10);
+  function drawCenter(raw, size, font = F, color = DARK) {
+    const text = rtl(raw);
+    const tw = font.widthOfTextAtSize(text, size);
+    checkY(size * 2);
+    page.drawText(text, { x: (PW - tw) / 2, y, size, font, color });
+    y -= size * 1.8;
   }
 
-  // ── helper: جدول ──
-  function drawTable(headers, rows, colWidths) {
-    checkPage(headers.length * 28 + rows.length * 26 + 10);
-    const rowH = 24, hdrH = 26;
-    const startX = ML;
+  // ── عنوان ماده ──────────────────────────────────────
+  function section(title) {
+    checkY(50);
+    y -= 8;
+    page.drawRectangle({ x: ML, y: y - 2, width: CW, height: 23, color: NAVY });
+    const t = rtl(title);
+    const tw = FB.widthOfTextAtSize(t, 11);
+    page.drawText(t, { x: ML + CW - tw - 6, y: y + 5, size: 11, font: FB, color: WHITE });
+    y -= 28;
+  }
 
+  // ── آیتم لیست ───────────────────────────────────────
+  function item(raw) {
+    drawText("• " + raw, { size: 10.5, x: ML + 8, width: CW - 8 });
+  }
+
+  // ── جدول ────────────────────────────────────────────
+  function table(headers, rows, widths) {
+    const hH = 26, rH = 24;
+    const totalH = hH + rows.length * rH;
+    checkY(totalH + 10);
+
+    let cx = ML;
     // هدر
-    let cx = startX;
     headers.forEach((h, i) => {
-      page.drawRectangle({ x: cx, y: y - hdrH, width: colWidths[i], height: hdrH, color: NAVY });
-      page.drawRectangle({ x: cx, y: y - hdrH, width: colWidths[i], height: hdrH,
-        borderColor: NAVY, borderWidth: 0.5 });
-      const tw = vazirBold.widthOfTextAtSize(h, 10);
-      page.drawText(h, { x: cx + (colWidths[i] - tw) / 2, y: y - hdrH + 8, size: 10, font: vazirBold, color: WHITE });
-      cx += colWidths[i];
+      page.drawRectangle({ x: cx, y: y - hH, width: widths[i], height: hH, color: NAVY });
+      page.drawRectangle({ x: cx, y: y - hH, width: widths[i], height: hH,
+        borderColor: rgb(0.2,0.3,0.5), borderWidth: 0.5 });
+      const t = rtl(h);
+      const tw = FB.widthOfTextAtSize(t, 10);
+      page.drawText(t, { x: cx + (widths[i] - tw) / 2, y: y - hH + 9, size: 10, font: FB, color: WHITE });
+      cx += widths[i];
     });
-    y -= hdrH;
+    y -= hH;
 
     // ردیف‌ها
     rows.forEach((row, ri) => {
+      cx = ML;
       const bg = ri % 2 === 0 ? LIGHT_BG : WHITE;
-      cx = startX;
       row.forEach((cell, ci) => {
-        page.drawRectangle({ x: cx, y: y - rowH, width: colWidths[ci], height: rowH,
-          color: bg, borderColor: rgb(0.75, 0.75, 0.75), borderWidth: 0.5 });
-        const tw = vazir.widthOfTextAtSize(cell, 9.5);
-        page.drawText(cell, { x: cx + (colWidths[ci] - tw) / 2, y: y - rowH + 7,
-          size: 9.5, font: vazir, color: DARK });
-        cx += colWidths[ci];
+        page.drawRectangle({ x: cx, y: y - rH, width: widths[ci], height: rH,
+          color: bg, borderColor: rgb(0.75,0.75,0.75), borderWidth: 0.5 });
+        const t = rtl(cell);
+        const tw = F.widthOfTextAtSize(t, 9.5);
+        page.drawText(t, { x: cx + (widths[ci] - tw) / 2, y: y - rH + 7,
+          size: 9.5, font: F, color: DARK });
+        cx += widths[ci];
       });
-      y -= rowH;
+      y -= rH;
     });
     y -= 8;
   }
 
-  const date = new Date().toLocaleDateString("fa-IR");
-  const price = Number(order.finalPrice);
+  // ═══════════════════════════════════════════════════
+  // داده‌ها
+  // ═══════════════════════════════════════════════════
+  const price    = Number(order.finalPrice);
   const features = (order.features || []).join("، ");
-  const contractNo = `WEB-${String(order._id || "0001").slice(-4).toUpperCase()}`;
+  const date     = new Date().toLocaleDateString("fa-IR");
+  const cNo      = `WEB-${String(order._id || "0001").slice(-4).toUpperCase()}`;
 
-  // ════ هدر ════
-  textC("بسمه تعالی", y, 11, vazirBold, NAVY);
-  y -= 22;
-  textC("قرارداد طراحی وب‌سایت", y, 20, vazirBold, NAVY);
+  // ═══════════════════════════════════════════════════
+  // هدر صفحه
+  // ═══════════════════════════════════════════════════
+  drawCenter("بسمه تعالی", 11, FB, NAVY);
+  y -= 2;
+  drawCenter("قرارداد طراحی وب‌سایت", 20, FB, NAVY);
+  y -= 4;
+  page.drawLine({ start:{x:ML,y}, end:{x:PW-MR,y}, thickness:2, color:NAVY });
   y -= 14;
-  page.drawLine({ start: { x: ML, y }, end: { x: W - MR, y }, thickness: 2, color: NAVY });
-  y -= 16;
 
-  // تاریخ و شماره
-  const dateText = `تاریخ: ${date}`;
-  const noText   = `شماره: ${contractNo}`;
-  textR(dateText, ML, y, 10, vazir, GRAY, CW / 2);
-  const noW = vazir.widthOfTextAtSize(noText, 10);
-  page.drawText(noText, { x: ML + CW / 2, y, size: 10, font: vazir, color: GRAY });
-  y -= 22;
+  // تاریخ + شماره
+  const dateT = rtl(`تاریخ: ${date}`);
+  const noT   = rtl(`شماره: ${cNo}`);
+  page.drawText(dateT, { x: ML, y, size:10, font:F, color:GRAY });
+  const noW = F.widthOfTextAtSize(noT, 10);
+  page.drawText(noT, { x: PW - MR - noW, y, size:10, font:F, color:GRAY });
+  y -= 20;
 
-  // ════ ماده ۱ ════
-  sectionHeader("ماده ۱ – مشخصات طرفین قرارداد");
-  drawTable(
+  // ═══════════════════════════════════════════════════
+  // ماده ۱
+  // ═══════════════════════════════════════════════════
+  section("ماده ۱ – مشخصات طرفین قرارداد");
+  table(
     ["مجری (طراح)", "کارفرما"],
     [
-      ["آقای پارسا اسدزاده",      order.name     || "—"],
-      ["طراح و توسعه‌دهنده وب",   "—"],
-      ["اطلاعات تماس: محرمانه",   order.contact  || "—"],
+      ["آقای پارسا اسدزاده",    order.name    || "—"],
+      ["طراح و توسعه‌دهنده وب", "—"],
+      ["اطلاعات تماس: محرمانه", order.contact || "—"],
     ],
-    [CW / 2, CW / 2]
+    [CW/2, CW/2]
   );
-  bodyText(`این قرارداد فی‌مابین آقای پارسا اسدزاده (مجری) و ${order.name} (کارفرما) با اراده‌ی آزاد، بر اساس مفاد این سند منعقد و لازم‌الاجرا می‌گردد.`);
+  drawText(
+    `این قرارداد فی‌مابین آقای پارسا اسدزاده (مجری) و ${order.name} (کارفرما) ` +
+    `با اراده‌ی آزاد و بدون اکراه، بر اساس مفاد این سند منعقد و لازم‌الاجرا می‌گردد.`
+  );
 
-  // ════ ماده ۲ ════
-  sectionHeader("ماده ۲ – موضوع قرارداد");
-  bodyText(`موضوع این قرارداد طراحی، توسعه و راه‌اندازی وب‌سایت از نوع «${order.siteType}» با امکانات ${features} می‌باشد.`);
-  if (order.desc)   bodyText(`شرح تکمیلی: ${order.desc}`);
-  if (order.refUrl) bodyText(`سایت مرجع: ${order.refUrl}`, 9.5, vazir);
+  // ═══════════════════════════════════════════════════
+  // ماده ۲
+  // ═══════════════════════════════════════════════════
+  section("ماده ۲ – موضوع قرارداد");
+  drawText(`موضوع این قرارداد طراحی، توسعه و راه‌اندازی وب‌سایت از نوع «${order.siteType}» با امکانات ${features} می‌باشد.`);
+  if (order.desc)   drawText(`شرح تکمیلی: ${order.desc}`);
+  if (order.refUrl) drawText(`سایت مرجع: ${order.refUrl}`, { size:9.5, color:GRAY });
 
-  // ════ ماده ۳ ════
-  sectionHeader("ماده ۳ – شرح خدمات");
-  ["طراحی رابط کاربری (UI/UX) مطابق هویت بصری کارفرما",
-   "کدنویسی و توسعه فرانت‌اند و بک‌اند وب‌سایت",
-   `ادغام امکانات: ${features}`,
-   "بهینه‌سازی اولیه برای موتورهای جستجو (SEO On-Page)",
-   "تست سازگاری با مرورگرها و ریسپانسیو بودن",
-   "تحویل فایل‌ها و آموزش مقدماتی مدیریت سایت",
-  ].forEach(listItem);
+  // ═══════════════════════════════════════════════════
+  // ماده ۳
+  // ═══════════════════════════════════════════════════
+  section("ماده ۳ – شرح خدمات");
+  [
+    "طراحی رابط کاربری (UI/UX) مطابق هویت بصری کارفرما",
+    "کدنویسی و توسعه فرانت‌اند و بک‌اند وب‌سایت",
+    `ادغام امکانات درخواستی: ${features}`,
+    "بهینه‌سازی اولیه موتورهای جستجو (SEO On-Page)",
+    "تست سازگاری مرورگرها و ریسپانسیو بودن سایت",
+    "تحویل فایل‌ها و آموزش مقدماتی مدیریت سایت",
+  ].forEach(item);
 
-  // ════ ماده ۴ ════
-  sectionHeader("ماده ۴ – زمان‌بندی پروژه");
-  bodyText(`مهلت تحویل نهایی: ${order.deadline || "توافقی"}`);
-  bodyText("در صورت تأخیر کارفرما در ارائه محتوا یا تأیید مراحل، زمان‌بندی به همان میزان تعویق می‌افتد.");
+  // ═══════════════════════════════════════════════════
+  // ماده ۴
+  // ═══════════════════════════════════════════════════
+  section("ماده ۴ – زمان‌بندی پروژه");
+  drawText(`مهلت تحویل نهایی پروژه: ${order.deadline || "توافقی"}`);
+  drawText("در صورت تأخیر کارفرما در ارائه محتوا یا تأیید مراحل، زمان‌بندی به همان میزان به تعویق می‌افتد.");
 
-  // ════ ماده ۵ ════
-  sectionHeader("ماده ۵ – مبلغ قرارداد و نحوه پرداخت");
-  bodyText(`مبلغ کل قرارداد: ${price.toLocaleString("fa-IR")} تومان`);
-  drawTable(
+  // ═══════════════════════════════════════════════════
+  // ماده ۵
+  // ═══════════════════════════════════════════════════
+  section("ماده ۵ – مبلغ قرارداد و نحوه پرداخت");
+  drawText(`مبلغ کل قرارداد: ${price.toLocaleString("fa-IR")} تومان`);
+  table(
     ["مرحله", "درصد", "مبلغ (تومان)", "زمان پرداخت"],
     [
-      ["پیش‌پرداخت",  "۵۰٪", (price * .5).toLocaleString("fa-IR"), "هنگام امضای قرارداد"],
-      ["مرحله دوم",   "۳۰٪", (price * .3).toLocaleString("fa-IR"), "پس از تأیید طراحی"],
-      ["تسویه نهایی", "۲۰٪", (price * .2).toLocaleString("fa-IR"), "پس از تحویل نهایی"],
+      ["پیش‌پرداخت",  "۵۰٪", (price*.5).toLocaleString("fa-IR"), "هنگام امضای قرارداد"],
+      ["مرحله دوم",   "۳۰٪", (price*.3).toLocaleString("fa-IR"), "پس از تأیید طراحی"],
+      ["تسویه نهایی", "۲۰٪", (price*.2).toLocaleString("fa-IR"), "پس از تحویل نهایی"],
     ],
-    [CW * .22, CW * .13, CW * .3, CW * .35]
+    [CW*.22, CW*.13, CW*.3, CW*.35]
   );
 
-  // ════ ماده ۶ ════
-  sectionHeader("ماده ۶ – حقوق مالکیت معنوی");
-  bodyText("کلیه حقوق مالکیت معنوی پس از تسویه کامل مبلغ به کارفرما منتقل می‌گردد. مجری حق نمایش نمونه‌کار (بدون افشای اطلاعات محرمانه) را دارد.");
+  // ═══════════════════════════════════════════════════
+  // ماده ۶
+  // ═══════════════════════════════════════════════════
+  section("ماده ۶ – حقوق مالکیت معنوی");
+  drawText("کلیه حقوق مالکیت معنوی پس از تسویه کامل مبلغ به کارفرما منتقل می‌گردد. مجری حق نمایش نمونه‌کار بدون افشای اطلاعات محرمانه را دارد.");
 
-  // ════ ماده ۷ ════
-  sectionHeader("ماده ۷ – تعهدات طرفین");
-  bodyText("تعهدات مجری:", 10.5, vazirBold);
+  // ═══════════════════════════════════════════════════
+  // ماده ۷
+  // ═══════════════════════════════════════════════════
+  section("ماده ۷ – تعهدات طرفین");
+  drawText("تعهدات مجری:", { font: FB, size:10.5 });
   ["انجام خدمات با کیفیت مطلوب و استانداردهای روز",
-   "رعایت زمان‌بندی و ارائه گزارش پیشرفت",
-   "حفظ محرمانگی کامل اطلاعات کارفرما",
-  ].forEach(listItem);
+   "رعایت زمان‌بندی و ارائه گزارش پیشرفت در مراحل کلیدی",
+   "حفظ محرمانگی کامل اطلاعات کارفرما"].forEach(item);
+
   y -= 4;
-  bodyText("تعهدات کارفرما:", 10.5, vazirBold);
-  ["ارائه به‌موقع محتوا و اطلاعات مورد نیاز",
+  drawText("تعهدات کارفرما:", { font: FB, size:10.5 });
+  ["ارائه به‌موقع محتوا، تصاویر و اطلاعات مورد نیاز",
    "پرداخت اقساط در موعد مقرر",
-   "ارائه بازخورد حداکثر ظرف ۷ روز کاری",
-  ].forEach(listItem);
+   "ارائه بازخورد حداکثر ظرف ۷ روز کاری"].forEach(item);
 
-  // ════ ماده ۸ ════
-  sectionHeader("ماده ۸ – ضمانت و پشتیبانی");
-  bodyText("مجری متعهد است پس از تحویل، ۳ ماه پشتیبانی رایگان (رفع اشکالات فنی) ارائه نماید. تغییرات محتوایی و توسعه امکانات جدید مشمول هزینه جداگانه است.");
+  // ═══════════════════════════════════════════════════
+  // ماده ۸
+  // ═══════════════════════════════════════════════════
+  section("ماده ۸ – ضمانت و پشتیبانی");
+  drawText("مجری متعهد است پس از تحویل نهایی، ۳ ماه پشتیبانی رایگان شامل رفع اشکالات فنی ارائه نماید. تغییرات محتوایی و توسعه امکانات جدید مشمول هزینه جداگانه است.");
 
-  // ════ ماده ۹ ════
-  sectionHeader("ماده ۹ – شرایط فسخ");
-  bodyText("فسخ مستلزم اطلاع‌رسانی کتبی ۱۰ روز قبل است. هزینه‌های انجام‌شده بر اساس توافق تسویه می‌گردد.");
+  // ═══════════════════════════════════════════════════
+  // ماده ۹
+  // ═══════════════════════════════════════════════════
+  section("ماده ۹ – شرایط فسخ قرارداد");
+  drawText("فسخ قرارداد مستلزم اطلاع‌رسانی کتبی حداقل ۱۰ روز قبل است. هزینه‌های انجام‌شده تا زمان فسخ بر اساس توافق طرفین تسویه می‌گردد.");
 
-  // ════ ماده ۱۰ ════
-  sectionHeader("ماده ۱۰ – حل اختلاف و قانون حاکم");
-  bodyText("اختلافات ابتدا از طریق مذاکره، سپس داوری و در نهایت مراجع قضایی جمهوری اسلامی ایران حل‌وفصل می‌شود.");
+  // ═══════════════════════════════════════════════════
+  // ماده ۱۰
+  // ═══════════════════════════════════════════════════
+  section("ماده ۱۰ – حل اختلاف و قانون حاکم");
+  drawText("اختلافات ابتدا از طریق مذاکره، سپس داوری و در نهایت مراجع قضایی جمهوری اسلامی ایران حل‌وفصل می‌شود.");
 
-  // ════ ماده ۱۱ ════
-  sectionHeader("ماده ۱۱ – سایر شرایط");
-  bodyText("این قرارداد در ۲ نسخه با اعتبار یکسان تنظیم شده. هرگونه اصلاح باید کتبی و با امضای هر دو طرف باشد.");
+  // ═══════════════════════════════════════════════════
+  // ماده ۱۱
+  // ═══════════════════════════════════════════════════
+  section("ماده ۱۱ – سایر شرایط");
+  drawText("این قرارداد در ۲ نسخه با اعتبار یکسان تنظیم شده است. هرگونه اصلاح باید به صورت کتبی و با امضای هر دو طرف صورت پذیرد.");
 
-  // ════ بلوک امضا ════
-  checkPage(160);
-  y -= 16;
-  page.drawLine({ start: { x: ML, y }, end: { x: W - MR, y }, thickness: 1, color: NAVY });
-  y -= 14;
-  textC("این قرارداد با علم و آگاهی کامل از مفاد آن به صورت رسمی تنظیم شده و لازم‌الاجرا می‌باشد.", y, 10, vazir, DARK);
-  y -= 24;
+  // ═══════════════════════════════════════════════════
+  // صفحه امضا (صفحه جدید)
+  // ═══════════════════════════════════════════════════
+  addPage();
 
-  const sigW = CW / 2 - 8;
-  const sigH = 100;
-  const sigY = y - sigH;
+  // هدر صفحه امضا
+  page.drawRectangle({ x:0, y:PH-70, width:PW, height:70, color:NAVY });
+  const h1 = rtl("صفحه امضا");
+  const h1w = FB.widthOfTextAtSize(h1, 18);
+  page.drawText(h1, { x:(PW-h1w)/2, y:PH-42, size:18, font:FB, color:WHITE });
+  const h2 = rtl("قرارداد طراحی وب‌سایت");
+  const h2w = F.widthOfTextAtSize(h2, 11);
+  page.drawText(h2, { x:(PW-h2w)/2, y:PH-60, size:11, font:F, color:rgb(0.7,0.8,1) });
 
-  // کادر مجری (راست)
-  page.drawRectangle({ x: ML + CW / 2 + 8, y: sigY, width: sigW, height: sigH,
-    borderColor: NAVY, borderWidth: 1 });
-  textR("امضای مجری", ML + CW / 2 + 8, sigY + sigH - 18, 11, vazirBold, NAVY, sigW);
-  textR("آقای پارسا اسدزاده", ML + CW / 2 + 8, sigY + sigH - 36, 10, vazir, DARK, sigW);
-  textR(`تاریخ: ${date}`, ML + CW / 2 + 8, sigY + 10, 9, vazir, GRAY, sigW);
+  y = PH - 100;
 
-  // کادر کارفرما (چپ)
-  page.drawRectangle({ x: ML, y: sigY, width: sigW, height: sigH,
-    borderColor: NAVY, borderWidth: 1 });
-  textR("امضای کارفرما", ML, sigY + sigH - 18, 11, vazirBold, NAVY, sigW);
-  textR(order.name || "کارفرما", ML, sigY + sigH - 36, 10, vazir, DARK, sigW);
+  // خط اطلاعات قرارداد
+  page.drawRectangle({ x:ML, y:y-36, width:CW, height:36, color:LIGHT_BG,
+    borderColor:NAVY, borderWidth:1 });
+  const info1 = rtl(`شماره قرارداد: ${cNo}`);
+  const info2 = rtl(`تاریخ: ${date}`);
+  const info3 = rtl(`مبلغ: ${price.toLocaleString("fa-IR")} تومان`);
+  page.drawText(info1, { x:ML+8,            y:y-22, size:10, font:FB, color:NAVY });
+  const i2w = F.widthOfTextAtSize(info2, 10);
+  page.drawText(info2, { x:(PW-i2w)/2,      y:y-22, size:10, font:F,  color:DARK });
+  const i3w = F.widthOfTextAtSize(info3, 10);
+  page.drawText(info3, { x:PW-MR-i3w,       y:y-22, size:10, font:FB, color:NAVY });
+  y -= 52;
 
-  // امضای دیجیتال (اگر موجود)
+  // متن تأیید
+  drawCenter("این قرارداد با علم و آگاهی کامل از مفاد آن به صورت رسمی تنظیم شده", 10.5, F, DARK);
+  drawCenter("و با امضای طرفین لازم‌الاجرا می‌گردد.", 10.5, F, DARK);
+  y -= 10;
+
+  // ── دو کادر امضا ──────────────────────────────────
+  const sigBoxW = (CW - 20) / 2;
+  const sigBoxH = 180;
+  const sigY    = y - sigBoxH;
+
+  // کادر مجری (سمت راست)
+  const rxStart = ML + sigBoxW + 20;
+  page.drawRectangle({ x:rxStart, y:sigY, width:sigBoxW, height:sigBoxH,
+    borderColor:NAVY, borderWidth:1.5, color:WHITE });
+  // هدر کادر
+  page.drawRectangle({ x:rxStart, y:sigY+sigBoxH-28, width:sigBoxW, height:28, color:NAVY });
+  const mt = rtl("امضای مجری");
+  const mtw = FB.widthOfTextAtSize(mt, 12);
+  page.drawText(mt, { x:rxStart+(sigBoxW-mtw)/2, y:sigY+sigBoxH-19, size:12, font:FB, color:WHITE });
+  // اطلاعات
+  const mn = rtl("آقای پارسا اسدزاده");
+  const mnw = FB.widthOfTextAtSize(mn, 11);
+  page.drawText(mn, { x:rxStart+(sigBoxW-mnw)/2, y:sigY+sigBoxH-50, size:11, font:FB, color:NAVY });
+  const mr2 = rtl("طراح و توسعه‌دهنده وب");
+  const mr2w = F.widthOfTextAtSize(mr2, 9.5);
+  page.drawText(mr2, { x:rxStart+(sigBoxW-mr2w)/2, y:sigY+sigBoxH-66, size:9.5, font:F, color:GRAY });
+  // خط امضا
+  page.drawLine({ start:{x:rxStart+15, y:sigY+45}, end:{x:rxStart+sigBoxW-15, y:sigY+45},
+    thickness:0.8, color:rgb(0.8,0.8,0.8), dashArray:[4,3] });
+  const sigLabel1 = rtl("محل امضا");
+  const sl1w = F.widthOfTextAtSize(sigLabel1, 9);
+  page.drawText(sigLabel1, { x:rxStart+(sigBoxW-sl1w)/2, y:sigY+27, size:9, font:F, color:GRAY });
+  const dt1 = rtl(`تاریخ: ${date}`);
+  const dt1w = F.widthOfTextAtSize(dt1, 9);
+  page.drawText(dt1, { x:rxStart+(sigBoxW-dt1w)/2, y:sigY+10, size:9, font:F, color:GRAY });
+
+  // کادر کارفرما (سمت چپ)
+  const lxStart = ML;
+  page.drawRectangle({ x:lxStart, y:sigY, width:sigBoxW, height:sigBoxH,
+    borderColor:NAVY, borderWidth:1.5, color:WHITE });
+  page.drawRectangle({ x:lxStart, y:sigY+sigBoxH-28, width:sigBoxW, height:28, color:NAVY });
+  const ct = rtl("امضای کارفرما");
+  const ctw = FB.widthOfTextAtSize(ct, 12);
+  page.drawText(ct, { x:lxStart+(sigBoxW-ctw)/2, y:sigY+sigBoxH-19, size:12, font:FB, color:WHITE });
+  const cn = rtl(order.name || "کارفرما");
+  const cnw = FB.widthOfTextAtSize(cn, 11);
+  page.drawText(cn, { x:lxStart+(sigBoxW-cnw)/2, y:sigY+sigBoxH-50, size:11, font:FB, color:NAVY });
+
+  // امضای دیجیتال (اگه باشه) وگرنه خط امضا
   if (order.clientSignature) {
-    const imgData = order.clientSignature.replace(/^data:image\/\w+;base64,/, "");
-    const imgBuf  = Buffer.from(imgData, "base64");
-    const img = await doc.embedPng(imgBuf);
-    page.drawImage(img, { x: ML + 4, y: sigY + 20, width: sigW - 8, height: 40 });
+    try {
+      const imgData = order.clientSignature.replace(/^data:image\/\w+;base64,/, "");
+      const imgBuf  = Buffer.from(imgData, "base64");
+      const img = await doc.embedPng(imgBuf).catch(() => doc.embedJpg(imgBuf));
+      page.drawImage(img, { x:lxStart+10, y:sigY+42, width:sigBoxW-20, height:55 });
+    } catch(e) { /* skip */ }
   } else {
-    textR("[ فضای امضا ]", ML, sigY + sigH / 2 - 5, 9.5, vazir, rgb(0.7,0.7,0.7), sigW);
+    page.drawLine({ start:{x:lxStart+15, y:sigY+45}, end:{x:lxStart+sigBoxW-15, y:sigY+45},
+      thickness:0.8, color:rgb(0.8,0.8,0.8), dashArray:[4,3] });
+    const sigLabel2 = rtl("محل امضای دیجیتال");
+    const sl2w = F.widthOfTextAtSize(sigLabel2, 9);
+    page.drawText(sigLabel2, { x:lxStart+(sigBoxW-sl2w)/2, y:sigY+27, size:9, font:F, color:GRAY });
   }
-  textR(`تاریخ: ${date}`, ML, sigY + 10, 9, vazir, GRAY, sigW);
 
-  y = sigY - 16;
-  page.drawLine({ start: { x: ML, y }, end: { x: W - MR, y }, thickness: 0.5, color: rgb(0.8,0.8,0.8) });
-  y -= 12;
-  textC("این سند به صورت الکترونیکی صادر شده و برای طرفین لازم‌الاجرا می‌باشد.", y, 8.5, vazir, GRAY);
+  const dt2 = rtl("تاریخ:");
+  const dt2w = F.widthOfTextAtSize(dt2, 9);
+  page.drawText(dt2, { x:lxStart+(sigBoxW-dt2w)/2, y:sigY+10, size:9, font:F, color:GRAY });
+
+  y = sigY - 24;
+
+  // ── اثر انگشت / QR placeholder ──────────────────────
+  page.drawRectangle({ x:ML, y:y-50, width:CW, height:50,
+    color:LIGHT_BG, borderColor:rgb(0.8,0.85,1), borderWidth:1 });
+  const qrText = rtl(`کد رهگیری قرارداد: ${cNo} | تاریخ صدور: ${date}`);
+  const qrw = F.widthOfTextAtSize(qrText, 9.5);
+  page.drawText(qrText, { x:(PW-qrw)/2, y:y-20, size:9.5, font:F, color:NAVY });
+  const noteText = rtl("این قرارداد به صورت الکترونیکی صادر شده و اعتبار قانونی دارد.");
+  const notew = F.widthOfTextAtSize(noteText, 9);
+  page.drawText(noteText, { x:(PW-notew)/2, y:y-36, size:9, font:F, color:GRAY });
 
   return await doc.save();
 }
-
-// تست
-const sampleOrder = {
-  _id: "6a913c82",
-  name: "شرکت فناوران نوین",
-  contact: "09121234567",
-  siteType: "Landing Page",
-  features: ["چندزبانه", "وبلاگ", "فرم تماس"],
-  finalPrice: 12000000,
-  deadline: "۴ هفته",
-  desc: "سایت معرفی محصولات",
-  refUrl: "https://example.com",
-};
-
-generateContractPDF(sampleOrder).then(bytes => {
-  require("fs").writeFileSync("/tmp/contract_final.pdf", bytes);
-  console.log("✅ Done! size:", bytes.length);
-}).catch(console.error);
 
 module.exports = { generateContractPDF };
