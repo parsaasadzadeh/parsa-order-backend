@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+const { randomUUID } = require("crypto");
 const Order = require("../models/Order");
 const { generateContractPDF } = require("./contractGenerator");
 
