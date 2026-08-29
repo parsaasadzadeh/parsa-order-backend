@@ -1,4 +1,4 @@
-const { randomUUID } = require("crypto");
+const crypto = require("crypto");
 const Order = require("../models/Order");
 const { generateContractPDF } = require("./contractGenerator");
 
@@ -24,10 +24,11 @@ exports.updatePrice = async (req, res) => {
     if (!finalPrice || isNaN(finalPrice))
       return res.status(400).json({ message: "قیمت معتبر وارد کنید" });
 
+    // ✅ FIX: Mongoose از { new: true } استفاده می‌کنه، نه returnDocument
     const order = await Order.findByIdAndUpdate(
       id,
       { finalPrice: Number(finalPrice), status: "reviewed" },
-      { returnDocument: "after" }
+      { new: true }
     );
     if (!order) return res.status(404).json({ message: "سفارش یافت نشد" });
     res.status(200).json({ message: "قیمت ثبت شد", order });
@@ -47,6 +48,7 @@ exports.generateSignLink = async (req, res) => {
     if (!order.finalPrice)
       return res.status(400).json({ message: "ابتدا قیمت را تعیین کنید" });
 
+    // ✅ FIX: crypto درست require شده بالا — این الان کار می‌کنه
     const token  = crypto.randomBytes(32).toString("hex");
     const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ساعت
 
@@ -75,11 +77,11 @@ exports.getOrderByToken = async (req, res) => {
       return res.status(404).json({ message: "لینک نامعتبر یا منقضی شده است" });
 
     res.status(200).json({
-      name:       order.name,
-      siteType:   order.siteType,
-      features:   order.features,
-      finalPrice: order.finalPrice,
-      deadline:   order.deadline,
+      name:          order.name,
+      siteType:      order.siteType,
+      features:      order.features,
+      finalPrice:    order.finalPrice,
+      deadline:      order.deadline,
       alreadySigned: !!order.clientSignature,
     });
   } catch (e) {
@@ -137,7 +139,10 @@ exports.approveAndGenerateContract = async (req, res) => {
 
     const pdfBytes = await generateContractPDF(order);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=contract_${order._id}.pdf`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=contract_${order._id}.pdf`
+    );
     res.end(Buffer.from(pdfBytes));
   } catch (e) {
     console.error("Contract Error:", e);
@@ -156,7 +161,10 @@ exports.downloadContract = async (req, res) => {
 
     const pdfBytes = await generateContractPDF(order);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=contract_${order._id}.pdf`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=contract_${order._id}.pdf`
+    );
     res.end(Buffer.from(pdfBytes));
   } catch (e) {
     res.status(500).json({ message: "خطا در دانلود", error: e.message });
