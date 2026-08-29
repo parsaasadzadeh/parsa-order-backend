@@ -34,8 +34,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // ✅ FIX: در Vercel باید string "*" باشه نه regex — هر دو رو پوشش میده
-app.options("*", cors(corsOptions));
-
+app.options(/(.*)/, cors(corsOptions));
 // =========================
 // Middleware
 // =========================
